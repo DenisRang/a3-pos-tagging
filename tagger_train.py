@@ -11,10 +11,13 @@ import torch.nn.functional as F
 import torch.optim as optim
 import tqdm
 
+class CNN(nn.Module):
+
 
 class LSTMTagger(nn.Module):
     EMBEDDING_DIM = 6
     HIDDEN_DIM = 6
+    K = 3
 
     @staticmethod
     def prepare_sequence(seq, to_ix):
@@ -23,6 +26,14 @@ class LSTMTagger(nn.Module):
         if USE_CUDA and torch.cuda.is_available():
             idxs = idxs.cuda()
         return idxs
+
+    def pad_word(self, word):
+        word=list(word)
+        left_right_pad_count = int((self.K - 1) / 2)
+        for i in range(left_right_pad_count):
+            word.insert(0, UNUSED_CHAR)
+            word.append(UNUSED_CHAR)
+        return word
 
     def __init__(self, word_to_idx, tag_to_idx, char_to_idx, embedding_dim=EMBEDDING_DIM, hidden_dim=HIDDEN_DIM):
         super(LSTMTagger, self).__init__()
@@ -43,24 +54,30 @@ class LSTMTagger(nn.Module):
 
         in_channel = 1
         l = 4
-        k = 3
         dw = 1
-        self.cnn = nn.Conv1d(in_channel, l, k, dw)
+        self.cnn = nn.Conv1d(in_channel, l, self.K, dw)
 
         # The linear layer that maps from hidden state space to tag space
         self.hidden2tag = nn.Linear(hidden_dim, tagset_size)
 
     def forward(self, sentence):
         # Character level representation for words
+        char_embeds = []
         for word in sentence:
+            word = self.pad_word(word)
             word = self.prepare_sequence(word, self.char_to_idx)
-            char_embeds = self.char_embeddings(word)
+            word_char_embeds = self.char_embeddings(word)
+            left_right_surrounding = int((self.K - 1) / 2)
+            for i in range(left_right_surrounding, len(word_char_embeds) - left_right_surrounding):
+                surrounding_char=word_char_embeds[i-left_right_surrounding:i+left_right_surrounding+1]
+                conv_char=self.cnn(surrounding_char)
+                print(conv_char.shape)
 
         # Embedding vector for words
         sentence = self.prepare_sequence(sentence, self.word_to_idx)
-        embeds = self.word_embeddings(sentence)
+        word_embeds = self.word_embeddings(sentence)
 
-        lstm_out, _ = self.lstm(embeds.view(len(sentence), 1, -1))
+        lstm_out, _ = self.lstm(word_embeds.view(len(sentence), 1, -1))
         tag_space = self.hidden2tag(lstm_out.view(len(sentence), -1))
         tag_scores = F.log_softmax(tag_space, dim=1)
         return tag_scores
@@ -69,6 +86,7 @@ class LSTMTagger(nn.Module):
 # Use CUDA for training on GPU
 USE_CUDA = False
 NUM_EPOCHS = 1
+UNUSED_CHAR = '#'
 
 
 # inp=5  # dimensionality of one sequence element
@@ -78,6 +96,12 @@ NUM_EPOCHS = 1
 #
 # mlp=nn.TemporalConvolution(inp,outp,kw,dw)
 
+def prepare_sequence(seq, to_ix):
+    idxs = [to_ix[w] for w in seq]
+    idxs = torch.tensor(idxs, dtype=torch.long)
+    if USE_CUDA and torch.cuda.is_available():
+        idxs = idxs.cuda()
+    return idxs
 
 def train_model(train_file, model_file):
     # write your code here. You can add functions as well.
@@ -110,23 +134,16 @@ def train_model(train_file, model_file):
         for tag in tags:
             if tag not in tag_to_idx:
                 tag_to_idx[tag] = len(tag_to_idx)
+    tag_to_idx[UNUSED_CHAR] = len(tag_to_idx)
     print(word_to_idx)
     print(tag_to_idx)
     print(char_to_idx)
 
-    model = LSTMTagger(len(word_to_idx), len(tag_to_idx))
+    model = LSTMTagger(word_to_idx, tag_to_idx, char_to_idx)
     if USE_CUDA and torch.cuda.is_available():
         model = model.cuda()
     loss_function = nn.NLLLoss()
     optimizer = optim.SGD(model.parameters(), lr=0.1)
-
-    # See what the scores are before training
-    # Note that element i,j of the output is the score for tag j for word i.
-    # Here we don't need to train, so the code is wrapped in torch.no_grad()
-    with torch.no_grad():
-        inputs = prepare_sequence(training_data[1][0], word_to_idx)
-        tag_scores = model(inputs)
-        # print(tag_scores)
 
     total_step = len(training_data)
     loss_list = []
@@ -138,16 +155,12 @@ def train_model(train_file, model_file):
             # We need to clear them out before each instance
             model.zero_grad()
 
-            # Step 2. Get our inputs ready for the network, that is, turn them into
-            # Tensors of word indices.
-            sentence_in = prepare_sequence(sentence, word_to_idx)
-            targets = prepare_sequence(tags, tag_to_idx)
-
             # Step 3. Run our forward pass.
-            tag_scores = model(sentence_in)
+            tag_scores = model(sentence)
 
             # Step 4. Compute the loss, gradients, and update the parameters by
             #  calling optimizer.step()
+            targets = prepare_sequence(tags, tag_to_idx)
             loss = loss_function(tag_scores, targets)
             loss_list.append(loss.item())
             loss.backward()
