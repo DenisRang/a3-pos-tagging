@@ -23,8 +23,8 @@ def prepare_test_sequence(seq, to_ix):
 def tag_sentence(test_file, model_file, out_file):
     # write your code here. You can add functions as well.
     # use torch library to load model_file
-    model = LSTMTagger()
     word_to_idx, tag_to_idx, model_state_dict = torch.load(model_file)
+    model = LSTMTagger(len(word_to_idx), len(tag_to_idx))
     model.load_state_dict(model_state_dict)
 
     with open(test_file) as f:
