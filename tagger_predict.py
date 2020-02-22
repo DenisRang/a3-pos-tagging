@@ -8,7 +8,6 @@ import pickle
 from numpy.random import randint
 from tagger_train import LSTMTagger
 
-UNUSED_CHAR = 'unused'
 
 def prepare_test_sequence(seq, to_ix):
     idxs = []
@@ -24,47 +23,7 @@ def prepare_test_sequence(seq, to_ix):
 def tag_sentence(test_file, model_file, out_file):
     # write your code here. You can add functions as well.
     # use torch library to load model_file
-
-
-    # write your code here. You can add functions as well.
-    # use torch library to save model parameters, hyperparameters, etc. to model_file
-    with open("/Users/denisrangulov/Google Drive/Assignment-3/corpus.train") as f:
-        content = f.read().splitlines()
-
-    training_data = []
-    for line in content:
-        words = []
-        tags = []
-        for word_with_tag in line.split():
-            word_with_tag_split = word_with_tag.split('/')
-            word, tag = word_with_tag_split[0], word_with_tag_split[1]
-            words.append(word)
-            tags.append(tag)
-        sample = (words, tags)
-        training_data.append(sample)
-
-    word_to_idx = {}
-    tag_to_idx = {}
-    char_to_idx = {}
-    for sent, tags in training_data:
-        for word in sent:
-            if word not in word_to_idx:
-                word_to_idx[word] = len(word_to_idx)
-                for char in word:
-                    if char not in char_to_idx:
-                        char_to_idx[char] = len(char_to_idx)
-        for tag in tags:
-            if tag not in tag_to_idx:
-                tag_to_idx[tag] = len(tag_to_idx)
-    char_to_idx[UNUSED_CHAR] = len(char_to_idx)
-    print(word_to_idx)
-    print(tag_to_idx)
-    print(char_to_idx)
-
-
-
-    # word_to_idx, tag_to_idx, model_state_dict = torch.load(model_file)
-    qqq, qq, model_state_dict = torch.load(model_file)
+    word_to_idx, tag_to_idx, char_to_idx, model_state_dict = torch.load(model_file)
     model = LSTMTagger(word_to_idx, tag_to_idx, char_to_idx)
     model.load_state_dict(model_state_dict)
 
@@ -75,7 +34,7 @@ def tag_sentence(test_file, model_file, out_file):
         for sentence in content:
             sentence_in = prepare_test_sequence(sentence.split(), word_to_idx)
             # Forward pass
-            tag_scores = model(sentence)
+            tag_scores = model(sentence.split())
             for i in range(0, len(sentence_in)):
                 word_idx = sentence_in[i]
                 tag_idx = tag_scores[i].argmax()

@@ -10,6 +10,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import tqdm
+from numpy.random import randint
+
 
 # class CNN(nn.Module):
 
@@ -27,7 +29,13 @@ class LSTMTagger(nn.Module):
 
     @staticmethod
     def prepare_sequence(seq, to_ix):
-        idxs = [to_ix[w] for w in seq]
+        idxs = []
+        for w in seq:
+            if w in to_ix:
+                idx = to_ix[w]
+            else:
+                idx = randint(len(to_ix))
+            idxs.append(idx)
         idxs = torch.tensor(idxs, dtype=torch.long)
         if USE_CUDA and torch.cuda.is_available():
             idxs = idxs.cuda()
