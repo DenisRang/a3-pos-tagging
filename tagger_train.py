@@ -11,13 +11,19 @@ import torch.nn.functional as F
 import torch.optim as optim
 import tqdm
 
-class CNN(nn.Module):
+# class CNN(nn.Module):
 
 
 class LSTMTagger(nn.Module):
     EMBEDDING_DIM = 6
     HIDDEN_DIM = 6
     K = 3
+
+    WORD_EMBEDDING_DIM = 1024
+    CHAR_EMBEDDING_DIM = 128
+    WORD_HIDDEN_DIM = 1024
+    CHAR_HIDDEN_DIM = 1024
+    EPOCHS = 70
 
     @staticmethod
     def prepare_sequence(seq, to_ix):
@@ -55,7 +61,9 @@ class LSTMTagger(nn.Module):
         in_channel = 1
         l = 4
         dw = 1
-        self.cnn = nn.Conv1d(in_channel, l, self.K, dw)
+        self.cnn = nn.Conv1d(in_channel, l, self.K*embedding_dim, dw)
+        # self.cnn = nn.MaxPool1d(kernel_size=2, stride=2)
+
 
         # The linear layer that maps from hidden state space to tag space
         self.hidden2tag = nn.Linear(hidden_dim, tagset_size)
@@ -68,10 +76,23 @@ class LSTMTagger(nn.Module):
             word = self.prepare_sequence(word, self.char_to_idx)
             word_char_embeds = self.char_embeddings(word)
             left_right_surrounding = int((self.K - 1) / 2)
+            x_hats=[]
             for i in range(left_right_surrounding, len(word_char_embeds) - left_right_surrounding):
-                surrounding_char=word_char_embeds[i-left_right_surrounding:i+left_right_surrounding+1]
-                conv_char=self.cnn(surrounding_char)
-                print(conv_char.shape)
+                x_hat=word_char_embeds[i-left_right_surrounding:i+left_right_surrounding+1]
+                x_hat=torch.flatten(x_hat)
+                x_hat=torch.reshape(x_hat, (1,1,-1))
+                x_hats.append(x_hat)
+            x_hats=torch.cat(x_hats,0)
+
+            s1=x_hats.shape
+            phi=self.cnn(x_hats)
+            s2=phi.shape
+            phi=torch.squeeze(phi,-1)
+            s3=phi.shape
+            char_repr = torch.max(phi,0)
+            s3=char_repr.shape
+            s4=phi.shape
+
 
         # Embedding vector for words
         sentence = self.prepare_sequence(sentence, self.word_to_idx)
