@@ -56,11 +56,11 @@ class LSTMTagger(nn.Module):
 
         # The LSTM takes word embeddings as inputs, and outputs hidden states
         # with dimensionality hidden_dim.
-        self.lstm = nn.LSTM(embedding_dim, hidden_dim)
 
         in_channel = 1
         l = 4
         dw = 1
+        self.lstm = nn.LSTM(embedding_dim+l, hidden_dim)
         self.cnn = nn.Conv1d(in_channel, l, self.K*embedding_dim, dw)
         # self.cnn = nn.MaxPool1d(kernel_size=2, stride=2)
 
@@ -70,7 +70,7 @@ class LSTMTagger(nn.Module):
 
     def forward(self, sentence):
         # Character level representation for words
-        char_embeds = []
+        char_reprs = []
         for word in sentence:
             word = self.pad_word(word)
             word = self.prepare_sequence(word, self.char_to_idx)
@@ -84,21 +84,20 @@ class LSTMTagger(nn.Module):
                 x_hats.append(x_hat)
             x_hats=torch.cat(x_hats,0)
 
-            s1=x_hats.shape
             phi=self.cnn(x_hats)
-            s2=phi.shape
             phi=torch.squeeze(phi,-1)
-            s3=phi.shape
-            char_repr = torch.max(phi,0)
-            s3=char_repr.shape
-            s4=phi.shape
-
+            char_repr = torch.max(phi,0)[0]
+            char_repr = torch.unsqueeze(char_repr, 0)
+            char_reprs.append(char_repr)
+        char_reprs = torch.cat(char_reprs, 0)
 
         # Embedding vector for words
         sentence = self.prepare_sequence(sentence, self.word_to_idx)
         word_embeds = self.word_embeddings(sentence)
 
-        lstm_out, _ = self.lstm(word_embeds.view(len(sentence), 1, -1))
+        combined = torch.cat((word_embeds, char_reprs), 1)
+
+        lstm_out, _ = self.lstm(combined.view(len(sentence), 1, -1))
         tag_space = self.hidden2tag(lstm_out.view(len(sentence), -1))
         tag_scores = F.log_softmax(tag_space, dim=1)
         return tag_scores
@@ -107,7 +106,7 @@ class LSTMTagger(nn.Module):
 # Use CUDA for training on GPU
 USE_CUDA = False
 NUM_EPOCHS = 1
-UNUSED_CHAR = '#'
+UNUSED_CHAR = 'unused'
 
 
 # inp=5  # dimensionality of one sequence element
@@ -155,7 +154,7 @@ def train_model(train_file, model_file):
         for tag in tags:
             if tag not in tag_to_idx:
                 tag_to_idx[tag] = len(tag_to_idx)
-    tag_to_idx[UNUSED_CHAR] = len(tag_to_idx)
+    char_to_idx[UNUSED_CHAR] = len(char_to_idx)
     print(word_to_idx)
     print(tag_to_idx)
     print(char_to_idx)
@@ -197,7 +196,7 @@ def train_model(train_file, model_file):
                       .format(epoch + 1, NUM_EPOCHS, i + 1, total_step, loss.item(),
                               (correct / total) * 100))
 
-    torch.save((word_to_idx, tag_to_idx, model.state_dict()), model_file)
+    torch.save((word_to_idx, tag_to_idx, char_to_idx, model.state_dict()), model_file)
     print('Finished...')
 
 
