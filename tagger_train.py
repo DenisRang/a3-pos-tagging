@@ -116,7 +116,7 @@ class LSTMTagger(nn.Module):
 # Use CUDA for training on GPU
 USE_CUDA = False
 NUM_EPOCHS = 1
-UNUSED_CHAR = 'unused'
+UNUSED_CHAR = '∞'
 
 
 # inp=5  # dimensionality of one sequence element
