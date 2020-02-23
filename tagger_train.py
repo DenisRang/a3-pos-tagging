@@ -2,6 +2,7 @@
 
 import pickle
 import sys
+import time
 from random import uniform
 
 import numpy as np
@@ -68,13 +69,13 @@ class LSTMTagger(nn.Module):
         in_channel = 1
         l = 4
         dw = 1
-        self.lstm = nn.LSTM(embedding_dim+l, hidden_dim)
+        self.lstm = nn.LSTM(embedding_dim+l, hidden_dim,bidirectional=True)
         self.cnn = nn.Conv1d(in_channel, l, self.K*embedding_dim, dw)
         # self.cnn = nn.MaxPool1d(kernel_size=2, stride=2)
 
 
         # The linear layer that maps from hidden state space to tag space
-        self.hidden2tag = nn.Linear(hidden_dim, tagset_size)
+        self.hidden2tag = nn.Linear(hidden_dim*2, tagset_size)
 
     def forward(self, sentence):
         # Character level representation for words
@@ -106,6 +107,7 @@ class LSTMTagger(nn.Module):
         combined = torch.cat((word_embeds, char_reprs), 1)
 
         lstm_out, _ = self.lstm(combined.view(len(sentence), 1, -1))
+        s1=lstm_out.shape
         tag_space = self.hidden2tag(lstm_out.view(len(sentence), -1))
         tag_scores = F.log_softmax(tag_space, dim=1)
         return tag_scores
@@ -177,6 +179,7 @@ def train_model(train_file, model_file):
     loss_list = []
     acc_list = []
     ### Reduce number of epochs, if training data is big
+    start_time=time.time()
     for epoch in range(NUM_EPOCHS):  # again, normally you would NOT do 300 epochs, it is toy data
         for i, (sentence, tags) in enumerate(training_data):
             # Step 1. Remember that Pytorch accumulates gradients.
@@ -203,7 +206,7 @@ def train_model(train_file, model_file):
                 print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Accuracy: {:.2f}%'
                       .format(epoch + 1, NUM_EPOCHS, i + 1, total_step, loss.item(),
                               (correct / total) * 100))
-
+    print(f'Duration: {time.time()-start_time}')
     torch.save((word_to_idx, tag_to_idx, char_to_idx, model.state_dict()), model_file)
     print('Finished...')
 
