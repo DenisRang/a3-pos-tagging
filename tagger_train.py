@@ -180,7 +180,7 @@ def train_model(train_file, model_file):
     acc_list = []
     ### Reduce number of epochs, if training data is big
     start_time=time.time()
-    for epoch in range(NUM_EPOCHS):  # again, normally you would NOT do 300 epochs, it is toy data
+    for epoch in range(3):  # again, normally you would NOT do 300 epochs, it is toy data
         for i, (sentence, tags) in enumerate(training_data):
             # Step 1. Remember that Pytorch accumulates gradients.
             # We need to clear them out before each instance
