@@ -1,4 +1,3 @@
-
 # python3.7 tagger_train.py <train_file_absolute_path> <model_file_absolute_path>
 
 import pickle
@@ -18,18 +17,14 @@ from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
 
 
-
-# class CNN(nn.Module):
-
-
-
 class LSTMTagger(nn.Module):
     EMBEDDING_DIM = 6
     HIDDEN_DIM = 6
     K = 3
 
-    WORD_EMBEDDING_DIM = 1024
-    CHAR_EMBEDDING_DIM = 128
+
+    WORD_EMBEDDING_DIM = 10
+    CHAR_EMBEDDING_DIM = 6
     WORD_HIDDEN_DIM = 1024
     CHAR_HIDDEN_DIM = 1024
     EPOCHS = 70
@@ -52,8 +47,8 @@ class LSTMTagger(nn.Module):
         word = list(word)
         left_right_pad_count = int((self.K - 1) / 2)
         for i in range(left_right_pad_count):
-            word.insert(0, UNUSED)
-            word.append(UNUSED)
+            word.insert(0, UNUSED_ITEM)
+            word.append(UNUSED_ITEM)
         return word
 
     def __init__(self, word_to_idx, tag_to_idx, char_to_idx, embedding_dim=EMBEDDING_DIM, hidden_dim=HIDDEN_DIM):
@@ -66,19 +61,15 @@ class LSTMTagger(nn.Module):
         vocab_size = len(word_to_idx)
         tagset_size = len(tag_to_idx)
         alphabet_size = len(char_to_idx)
-        self.word_embeddings = nn.Embedding(vocab_size+1, embedding_dim)
-        self.char_embeddings = nn.Embedding(alphabet_size, embedding_dim)
-
-        # The LSTM takes word embeddings as inputs, and outputs hidden states
-        # with dimensionality hidden_dim.
+        self.word_embeddings = nn.Embedding(vocab_size, self.WORD_EMBEDDING_DIM)
+        self.char_embeddings = nn.Embedding(alphabet_size, self.CHAR_EMBEDDING_DIM)
 
         in_channel = 1
         l = 4
         dw = 1
-        self.lstm = nn.LSTM(embedding_dim, hidden_dim, bidirectional=True)
-        self.cnn = nn.Conv1d(in_channel, l, self.K * embedding_dim, dw)
+        self.lstm = nn.LSTM(self.WORD_EMBEDDING_DIM+l, hidden_dim, bidirectional=True)
+        self.cnn = nn.Conv1d(in_channel, l, self.K * self.CHAR_EMBEDDING_DIM, dw)
         # self.drop_out = nn.Dropout(0.2)
-        # self.cnn = nn.MaxPool1d(kernel_size=2, stride=2)
 
         # The linear layer that maps from hidden state space to tag space
         self.hidden2tag = nn.Linear(hidden_dim * 2, tagset_size)
@@ -86,7 +77,6 @@ class LSTMTagger(nn.Module):
     def forward(self, sentences, sentences_seq):
         char_embeds = []
         lengths = []
-        sentence_length = len(sentences[0])
         for sentence in sentences:
             # Character level representation for words
             lengths.append(len(sentence))
@@ -110,28 +100,18 @@ class LSTMTagger(nn.Module):
                 char_repr = torch.unsqueeze(char_repr, 0)
                 char_reprs.append(char_repr)
             char_reprs = torch.cat(char_reprs, 0)
-
-            # Embedding vector for words
-            #sentence = self.prepare_sequence(sentence, self.word_to_idx)
-            
-            #combined = torch.cat(char_reprs, 1)
-            
             char_embeds.append(char_reprs)
-            
-            
-        #char_embeds = torch.stack(char_embeds)
-        #print(char_embeds.size())
-        
+
+        char_embeds = torch.stack(char_embeds)
+
         word_embeds = self.word_embeddings(sentences_seq)
-        new_word_embeds = pack_padded_sequence(word_embeds, lengths, batch_first=True, enforce_sorted=False)
-        
-        #batch_combined = torch.cat(new_word_embeds, char_embeds, 0)
-        lstm_out, _ = self.lstm(new_word_embeds)
-        #lstm_out = self.drop_out(lstm_out)
-        output_padded, output_lengths = pad_packed_sequence(lstm_out, batch_first=True)
-        tag_space = self.hidden2tag(output_padded.view(len(sentences_seq), len(sentences_seq[0]), -1))
+        combined = torch.cat((word_embeds, char_embeds), 2)
+        lstm_out, _ = self.lstm(combined.view(len(combined[0]), len(combined), -1))
+        # lstm_out = self.drop_out(lstm_out)
+        tag_space = self.hidden2tag(lstm_out.view(len(sentences_seq), len(sentences_seq[0]), -1))
         tag_scores = F.log_softmax(tag_space, dim=1)
         return tag_scores
+
 
 # class CNN(nn.Module):
 def prepare_sequence(seq, to_ix):
@@ -160,7 +140,6 @@ class CustomDataset(Dataset):
 
 def pad_collate(batch):
     (sents, sents_in, tags_in) = zip(*batch)
-    sents_lens = [len(sent) for sent in sents]
 
     sents_in_pad = pad_sequence(sents_in, batch_first=True, padding_value=43057)
     tags_in_pad = pad_sequence(tags_in, batch_first=True, padding_value=134)
@@ -168,24 +147,21 @@ def pad_collate(batch):
     return sents, sents_in_pad, tags_in_pad
 
 
-
 # Use CUDA for training on GPU
 USE_CUDA = False
 NUM_EPOCHS = 1
-UNUSED = '∞'
-BATCH_SIZE = 16
-
-
+UNUSED_ITEM = '∞'
+BATCH_SIZE = 128
 
 
 def train_model(train_file, model_file):
     # write your code here. You can add functions as well.
     # use torch library to save model parameters, hyperparameters, etc. to model_file
-    
+
     with open(train_file) as f:
         content = f.read().splitlines()
 
-    #content.sort(key=lambda x: len(x.split()), reverse=False)
+    content.sort(key=lambda x: len(x.split()), reverse=False)
 
     training_data = []
     for line in content:
@@ -198,9 +174,6 @@ def train_model(train_file, model_file):
             tags.append(tag)
         sample = (words, tags)
         training_data.append(sample)
-
-
-
 
     word_to_idx = {}
     tag_to_idx = {}
@@ -215,60 +188,65 @@ def train_model(train_file, model_file):
         for tag in tags:
             if tag not in tag_to_idx:
                 tag_to_idx[tag] = len(tag_to_idx)
-    word_to_idx[UNUSED] = len(word_to_idx)
-    tag_to_idx[UNUSED] = len(tag_to_idx)
-    char_to_idx[UNUSED] = len(char_to_idx)
-    print(len(word_to_idx))
-    print(len(tag_to_idx))
-    print(len(char_to_idx))
+    word_to_idx[UNUSED_ITEM] = len(word_to_idx)
+    tag_to_idx[UNUSED_ITEM] = len(tag_to_idx)
+    char_to_idx[UNUSED_ITEM] = len(char_to_idx)
 
 
     model = LSTMTagger(word_to_idx, tag_to_idx, char_to_idx)
     if USE_CUDA and torch.cuda.is_available():
         model = model.cuda()
     loss_function = nn.NLLLoss()
-    optimizer = optim.SGD(model.parameters(), lr=0.1)
+    optimizer = optim.SGD(model.parameters(), momentum=0.9, lr=10)
 
+    total_step = len(training_data)
     loss_list = []
     acc_list = []
     ### Reduce number of epochs, if training data is big
     start_time = time.time()
 
-    train_data = CustomDataset(training_data,word_to_idx, tag_to_idx)
-    train_loader = DataLoader(dataset=train_data, batch_size=BATCH_SIZE, shuffle=False, collate_fn=pad_collate)
-    total_step = len(train_loader)
+    train_data = CustomDataset(training_data, word_to_idx, tag_to_idx)
+    train_loader = DataLoader(dataset=train_data, batch_size=BATCH_SIZE, shuffle=False, collate_fn=pad_collate,num_workers=BATCH_SIZE)
 
     for epoch in range(NUM_EPOCHS):  # again, normally you would NOT do 300 epochs, it is toy data
 
-        for batch_idx,item in enumerate(train_loader):
+        for item in tqdm(train_loader):
             # Step 1. Remember that Pytorch accumulates gradients.
             # We need to clear them out before each instance
             model.zero_grad()
+            sentence = []
+            for i in range(len(item[0])):
+                sent = item[0][i] + [UNUSED_ITEM for i in range(len(item[1][0]) - len(item[0][i]))]
+                sentence.append(sent)
 
             # Step 3. Run our forward pass.
-            tag_scores = model(item[0], item[1])
+            tag_scores = model(sentence, item[1])
             #
             # # Step 4. Compute the loss, gradients, and update the parameters by
             # #  calling optimizer.step()
-            #targets = prepare_sequence(tags, tag_to_idx)
+            # targets = prepare_sequence(tags, tag_to_idx)
             temp_loss = torch.Tensor([0])
             for i in range(len(tag_scores)):
                 temp_loss += loss_function(tag_scores[i], item[2][i])
 
-            loss = temp_loss/BATCH_SIZE
-            #print('Loss: ' + str(loss.item()))
-    #         loss_list.append(loss.item())
+            loss = temp_loss / BATCH_SIZE
+            # print('Loss: ' + str(loss.item()))
+            #         loss_list.append(loss.item())
+            print(loss)
             loss.backward()
             optimizer.step()
             #
-    #         correct = (predicted == targets).sum().item()
-    #         acc_list.append(correct / total)
+        #         correct = (predicted == targets).sum().item()
+        #         acc_list.append(correct / total)
 
-            print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}'.format(epoch + 1, NUM_EPOCHS, batch_idx, total_step, loss.item()))
+        #         if (i + 1) % 100 == 0:
+        #             print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Accuracy: {:.2f}%'
+        #                   .format(epoch + 1, NUM_EPOCHS, i + 1, total_step, loss.item(),
+        #                           (correct / total) * 100))
         print("Epoch: " + str(epoch))
         print("Loss: " + str(loss))
     print(f'Duration: {time.time() - start_time}')
-    torch.save((word_to_idx, tag_to_idx, char_to_idx, model.state_dict()),model_file)
+    torch.save((word_to_idx, tag_to_idx, char_to_idx, model.state_dict()), model_file)
     print('Finished...')
 
 
