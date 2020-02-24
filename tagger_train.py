@@ -18,9 +18,9 @@ from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_se
 
 
 class LSTMTagger(nn.Module):
-    WORD_EMBEDDING_DIM = 180
+    WORD_EMBEDDING_DIM = 200
     CHAR_EMBEDDING_DIM = 10
-    HIDDEN_DIM = 180
+    HIDDEN_DIM = 200
     K = 3  # CNN sliding window size
     l = 32  # Number of different convolutional filters
 
@@ -45,7 +45,7 @@ class LSTMTagger(nn.Module):
 
         self.lstm = nn.LSTM(self.WORD_EMBEDDING_DIM + self.l, hidden_dim, bidirectional=True)
         self.cnn = nn.Conv1d(1, self.l, self.K * self.CHAR_EMBEDDING_DIM, 1)
-        # self.drop_out = nn.Dropout(0.2)
+        self.drop_out = nn.Dropout(0.5)
 
         # The linear layer that maps from hidden state space to tag space
         self.hidden2tag = nn.Linear(hidden_dim * 2, tagset_size)
@@ -83,7 +83,7 @@ class LSTMTagger(nn.Module):
         word_embeds = self.word_embeddings(sentences_seq)
         combined = torch.cat((word_embeds, char_embeds), 2)
         lstm_out, _ = self.lstm(combined.view(len(combined[0]), len(combined), -1))
-        # lstm_out = self.drop_out(lstm_out)
+        lstm_out = self.drop_out(lstm_out)
         tag_space = self.hidden2tag(lstm_out.view(len(sentences_seq), len(sentences_seq[0]), -1))
         tag_scores = F.log_softmax(tag_space, dim=1)
         return tag_scores
@@ -179,7 +179,7 @@ def train_model(train_file, model_file):
     model = LSTMTagger(word_to_idx, tag_to_idx, char_to_idx)
     if USE_CUDA and torch.cuda.is_available():
         model = model.cuda()
-    loss_function = nn.NLLLoss()
+    loss_function = nn.CrossEntropyLoss(ignore_index=padding_tag_idx)
     optimizer =  optim.Adam(model.parameters())
 
     train_data = CorpusDataset(training_data, word_to_idx, tag_to_idx)
