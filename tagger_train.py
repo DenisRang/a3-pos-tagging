@@ -18,11 +18,11 @@ from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_se
 
 
 class LSTMTagger(nn.Module):
-    WORD_EMBEDDING_DIM = 10
-    CHAR_EMBEDDING_DIM = 6
-    HIDDEN_DIM = 6
+    WORD_EMBEDDING_DIM = 180
+    CHAR_EMBEDDING_DIM = 10
+    HIDDEN_DIM = 180
     K = 3  # CNN sliding window size
-    l = 4  # Number of different convolutional filters
+    l = 32  # Number of different convolutional filters
 
     def pad_word(self, word):
         word = list(word)
@@ -130,8 +130,8 @@ def pad_collate(batch):
 
 USE_CUDA = False  # Use CUDA for training on GPU
 UNUSED_ITEM = '∞'
-NUM_EPOCHS = 2
-BATCH_SIZE = 32
+NUM_EPOCHS = 5
+BATCH_SIZE = 16
 padding_word_idx = 0
 padding_tag_idx = 0
 
@@ -180,7 +180,7 @@ def train_model(train_file, model_file):
     if USE_CUDA and torch.cuda.is_available():
         model = model.cuda()
     loss_function = nn.NLLLoss()
-    optimizer = optim.SGD(model.parameters(), lr=3.2)
+    optimizer =  optim.Adam(model.parameters())
 
     train_data = CorpusDataset(training_data, word_to_idx, tag_to_idx)
     train_loader = DataLoader(dataset=train_data, batch_size=BATCH_SIZE, shuffle=False, collate_fn=pad_collate,
@@ -211,8 +211,8 @@ def train_model(train_file, model_file):
 
         print("Epoch: " + str(epoch))
         print("Loss: " + str(loss))
+        torch.save((word_to_idx, tag_to_idx, char_to_idx, model.state_dict()), model_file)
     print(f'Duration: {time.time() - start_time}')
-    torch.save((word_to_idx, tag_to_idx, char_to_idx, model.state_dict()), model_file)
     print('Finished...')
 
 
