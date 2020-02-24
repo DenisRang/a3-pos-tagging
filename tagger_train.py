@@ -174,7 +174,7 @@ def train_model(train_file, model_file):
     tag_to_idx[UNUSED_ITEM] = len(tag_to_idx)
     char_to_idx[UNUSED_ITEM] = len(char_to_idx)
     padding_word_idx = len(word_to_idx) - 1
-    padding_tag_idx = len(tag_to_idx)
+    padding_tag_idx = len(tag_to_idx) - 1
 
     model = LSTMTagger(word_to_idx, tag_to_idx, char_to_idx)
     if USE_CUDA and torch.cuda.is_available():
