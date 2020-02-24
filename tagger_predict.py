@@ -33,15 +33,18 @@ def tag_sentence(test_file, model_file, out_file):
     with open(out_file, 'w') as f:
         for sentence in content:
             sentence_in = prepare_test_sequence(sentence.split(), word_to_idx)
+            sentence=[sentence.split()]
             # Forward pass
-            tag_scores = model(sentence.split())
+            tag_scores = model(sentence, sentence_in.unsqueeze(0))
             for i in range(0, len(sentence_in)):
                 word_idx = sentence_in[i]
-                tag_idx = tag_scores[i].argmax()
+                tag_idx = tag_scores[0][i].argmax()
+
                 f.write(f'{list(word_to_idx.keys())[int(word_idx)]}/{list(tag_to_idx.keys())[int(tag_idx)]} ')
             f.write('\n')
 
     print('Finished...')
+
 
 
 if __name__ == "__main__":
