@@ -1,9 +1,11 @@
+
 # python3.7 tagger_train.py <train_file_absolute_path> <model_file_absolute_path>
 
 import pickle
 import sys
-from random import uniform
 import time
+from random import uniform
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -11,60 +13,13 @@ import torch.nn.functional as F
 import torch.optim as optim
 from tqdm import tqdm
 from numpy.random import randint
-
-
-USE_CUDA = False
-NUM_EPOCHS = 1
-UNUSED_CHAR = 'unused_char'
-UNUSED_WORD = 'unused_word' 
-UNUSED_TAG = 'unused_tag'
-PADDING_SIZE = 80
-BATCH_SIZE = 64
-K = 3
-
-
-# inp=5  # dimensionality of one sequence element
-# outp=1 # number of derived features for one sequence element
-# kw=3   # kernel only operates on one sequence element per step
-# dw=1   # we step once and go on to the next sequence element
-#
-# mlp=nn.TemporalConvolution(inp,outp,kw,dw)
-
-def prepare_seq(seq, to_ix):
-    idxs = []
-    for w in seq:
-        if w in to_ix:
-            idx = to_ix[w]
-        else:
-            idx = randint(len(to_ix))
-        idxs.append(idx)
-    idxs = torch.tensor(idxs, dtype=torch.long)
-
-    return idxs
-    
-    
-def prepare_char_seq(seq, to_ix):
-    idxs = []
-    for w in seq:
-        if w in to_ix:
-            idx = to_ix[w]
-        else:
-            idx = randint(len(to_ix))
-        idxs.append(idx)
-    idxs = torch.tensor(idxs, dtype=torch.long)
-    return idxs
+from torch.utils.data import Dataset, TensorDataset
+from torch.utils.data import DataLoader
+from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
 
 
 
-def pad_word(word):
-    word=list(word)
-    left_right_pad_count = int((K - 1) / 2)
-    for i in range(left_right_pad_count):
-        word.insert(0, UNUSED_CHAR)
-        word.append(UNUSED_CHAR)
-    return word
-
-
+# class CNN(nn.Module):
 
 
 
@@ -81,22 +36,6 @@ class LSTMTagger(nn.Module):
 
     @staticmethod
     def prepare_sequence(seq, to_ix):
-        batch_idxs = []
-        for item in seq:
-            idxs = []
-            for w in item:
-                if w in to_ix:
-                    idx = to_ix[w]
-                else:
-                    idx = randint(len(to_ix))
-                idxs.append(idx)
-            idxs = torch.tensor(idxs, dtype=torch.long)
-            batch_idxs.append(idxs)
-        
-        return torch.stack(batch_idxs)
-    
-    @staticmethod
-    def prepare_char_seq(seq, to_ix):
         idxs = []
         for w in seq:
             if w in to_ix:
@@ -105,12 +44,12 @@ class LSTMTagger(nn.Module):
                 idx = randint(len(to_ix))
             idxs.append(idx)
         idxs = torch.tensor(idxs, dtype=torch.long)
+        if USE_CUDA and torch.cuda.is_available():
+            idxs = idxs.cuda()
         return idxs
-    
-        
 
     def pad_word(self, word):
-        word=list(word)
+        word = list(word)
         left_right_pad_count = int((self.K - 1) / 2)
         for i in range(left_right_pad_count):
             word.insert(0, UNUSED_CHAR)
@@ -125,9 +64,9 @@ class LSTMTagger(nn.Module):
         self.hidden_dim = hidden_dim
 
         vocab_size = len(word_to_idx)
-        tagset_size = len(tag_to_idx)
+        tagset_size = len(tag_to_idx)+2
         alphabet_size = len(char_to_idx)
-        self.word_embeddings = nn.Embedding(vocab_size, embedding_dim)
+        self.word_embeddings = nn.Embedding(vocab_size+1, embedding_dim)
         self.char_embeddings = nn.Embedding(alphabet_size, embedding_dim)
 
         # The LSTM takes word embeddings as inputs, and outputs hidden states
@@ -136,92 +75,116 @@ class LSTMTagger(nn.Module):
         in_channel = 1
         l = 4
         dw = 1
-        self.lstm = nn.LSTM(embedding_dim+l, hidden_dim)
-        self.cnn = nn.Conv1d(in_channel, l, self.K*embedding_dim, dw)
+        self.lstm = nn.LSTM(embedding_dim, hidden_dim, bidirectional=True)
+        self.cnn = nn.Conv1d(in_channel, l, self.K * embedding_dim, dw)
+        self.drop_out = nn.Dropout(0.2)
         # self.cnn = nn.MaxPool1d(kernel_size=2, stride=2)
 
-
         # The linear layer that maps from hidden state space to tag space
-        self.hidden2tag = nn.Linear(hidden_dim, tagset_size)
+        self.hidden2tag = nn.Linear(hidden_dim * 2, tagset_size)
 
-    def forward(self, sentence_batch, character_batch):
-        # Character level representation for words
-        #batch of char representation
-        batch_char_reprs = []
-        for sentence in character_batch:
-            char_reprs = []
-            for word in sentence:
-                word_char_embeds = self.char_embeddings(word)
-                left_right_surrounding = int((self.K - 1) / 2)
-                x_hats=[]
-                for i in range(left_right_surrounding, len(word_char_embeds) - left_right_surrounding):
-                    x_hat=word_char_embeds[i-left_right_surrounding:i+left_right_surrounding+1]
-                    x_hat=torch.flatten(x_hat)
-                    x_hat=torch.reshape(x_hat, (1,1,-1))
-                    x_hats.append(x_hat)
-                x_hats=torch.cat(x_hats,0)
-
-                phi=self.cnn(x_hats)
-                phi=torch.squeeze(phi,-1)
-                char_repr = torch.max(phi,0)[0]
-                char_repr = torch.unsqueeze(char_repr, 0)
-                char_reprs.append(char_repr)
-                
-            
-            char_reprs = torch.cat(char_reprs, 0)
-            
-            batch_char_reprs.append(char_reprs)
-            
-        batch_char_reprs = torch.stack(batch_char_reprs)
-        
-        # Embedding vector for words
-        sentence_batch = self.prepare_sequence(sentence_batch, self.word_to_idx)
-        word_embeds = self.word_embeddings(sentence_batch)
-        
-        combined = torch.cat((word_embeds, batch_char_reprs), 2)
-        
-        lstm_out, _ = self.lstm(combined.view(PADDING_SIZE, BATCH_SIZE, -1))
-        tag_space = self.hidden2tag(lstm_out.view(BATCH_SIZE, PADDING_SIZE, -1))
-        tag_scores = F.log_softmax(tag_space, dim=1)
-        
-                
-#         batch_char_reprs = []
-#         for sentence in sentence_batch:
+    def forward(self, sentences, sentences_seq):
+        char_embeds = []
+        lengths = []
+        sentence_length = len(sentences[0])
+#         for sentence in sentences:
+#             # Character level representation for words
+#             lengths.append(len(sentence))
 #             char_reprs = []
 #             for word in sentence:
-#                 word = self.pad_word(word)#can be done outsitde
-#                 word = self.prepare_char_seq(word, self.char_to_idx)#can be done outsitde
+#                 word = self.pad_word(word)
+#                 word = self.prepare_sequence(word, self.char_to_idx)
 #                 word_char_embeds = self.char_embeddings(word)
-                
-                
 #                 left_right_surrounding = int((self.K - 1) / 2)
-#                 x_hats=[]
+#                 x_hats = []
 #                 for i in range(left_right_surrounding, len(word_char_embeds) - left_right_surrounding):
-#                     x_hat=word_char_embeds[i-left_right_surrounding:i+left_right_surrounding+1]
-#                     x_hat=torch.flatten(x_hat)
-#                     x_hat=torch.reshape(x_hat, (1,1,-1))
+#                     x_hat = word_char_embeds[i - left_right_surrounding:i + left_right_surrounding + 1]
+#                     x_hat = torch.flatten(x_hat)
+#                     x_hat = torch.reshape(x_hat, (1, 1, -1))
 #                     x_hats.append(x_hat)
-#                 x_hats=torch.cat(x_hats,0)
+#                 x_hats = torch.cat(x_hats, 0)
 
-#                 phi=self.cnn(x_hats)
-#                 phi=torch.squeeze(phi,-1)
-#                 char_repr = torch.max(phi,0)[0]
+#                 phi = self.cnn(x_hats)
+#                 phi = torch.squeeze(phi, -1)
+#                 char_repr = torch.max(phi, 0)[0]
 #                 char_repr = torch.unsqueeze(char_repr, 0)
 #                 char_reprs.append(char_repr)
+#             char_reprs = torch.cat(char_reprs, 0)
+
+#             # Embedding vector for words
+#             #sentence = self.prepare_sequence(sentence, self.word_to_idx)
             
+#             #combined = torch.cat(char_reprs, 1)
+            
+#             char_embeds.append(char_reprs)
+            
+            
+        #char_embeds = torch.stack(char_embeds)
+        #print(char_embeds.size())
+        
+        word_embeds = self.word_embeddings(sentences_seq)
+        #new_word_embeds = pack_padded_sequence(word_embeds, lengths, batch_first=True, enforce_sorted=False) 
+        
+        #batch_combined = torch.cat(new_word_embeds, char_embeds, 0)
+        lstm_out, _ = self.lstm(word_embeds.view(len(sentences_seq[0]), len(sentences_seq), -1))
+        #lstm_out = self.drop_out(lstm_out)
+        tag_space = self.hidden2tag(lstm_out.view(len(sentences_seq), len(sentences_seq[0]), -1))
+        tag_scores = F.log_softmax(tag_space, dim=1)
         return tag_scores
+
+# class CNN(nn.Module):
+def prepare_sequence(seq, to_ix):
+    idxs = [to_ix[w] for w in seq]
+    idxs = torch.tensor(idxs, dtype=torch.long)
+    if USE_CUDA and torch.cuda.is_available():
+        idxs = idxs.cuda()
+    return idxs
+
+
+class CustomDataset(Dataset):
+    def __init__(self, training_data, word_to_idx, tag_to_idx):
+        self.training_data = training_data
+        self.word_to_idx = word_to_idx
+        self.tag_to_idx = tag_to_idx
+
+    def __getitem__(self, index):
+        sent = self.training_data[index][0]
+        sent_in = prepare_sequence(sent, self.word_to_idx)
+        tag_in = prepare_sequence(self.training_data[index][1], self.tag_to_idx)
+        return (sent, sent_in, tag_in)
+
+    def __len__(self):
+        return len(self.training_data)
+
+
+def pad_collate(batch):
+    (sents, sents_in, tags_in) = zip(*batch)
+    sents_lens = [len(sent) for sent in sents]
+
+    sents_in_pad = pad_sequence(sents_in, batch_first=True, padding_value=43057)
+    tags_in_pad = pad_sequence(tags_in, batch_first=True, padding_value=135)
+
+    return sents, sents_in_pad, tags_in_pad
+
+
+
+# Use CUDA for training on GPU
+USE_CUDA = False
+NUM_EPOCHS = 1
+UNUSED_CHAR = '∞'
+BATCH_SIZE = 16
+
 
 
 
 def train_model(train_file, model_file):
     # write your code here. You can add functions as well.
     # use torch library to save model parameters, hyperparameters, etc. to model_file
-    train_file = 'corpus.train'
-
-    prep = time.time()
-    print("Preprocessing...")
+    
     with open(train_file) as f:
         content = f.read().splitlines()
+
+    #content.sort(key=lambda x: len(x.split()), reverse=False)
 
     training_data = []
     for line in content:
@@ -234,6 +197,9 @@ def train_model(train_file, model_file):
             tags.append(tag)
         sample = (words, tags)
         training_data.append(sample)
+
+
+
 
     word_to_idx = {}
     tag_to_idx = {}
@@ -249,14 +215,9 @@ def train_model(train_file, model_file):
             if tag not in tag_to_idx:
                 tag_to_idx[tag] = len(tag_to_idx)
     char_to_idx[UNUSED_CHAR] = len(char_to_idx)
-    word_to_idx[UNUSED_WORD] = len(word_to_idx)
-    tag_to_idx[UNUSED_TAG] = len(tag_to_idx)
-
-
-    #     print(word_to_idx)
-    #     print(tag_to_idx)
-    #     print(char_to_idx)
-
+    # print(word_to_idx)
+    # print(tag_to_idx)
+    # print(char_to_idx)
 
     model = LSTMTagger(word_to_idx, tag_to_idx, char_to_idx)
     if USE_CUDA and torch.cuda.is_available():
@@ -267,88 +228,46 @@ def train_model(train_file, model_file):
     total_step = len(training_data)
     loss_list = []
     acc_list = []
-
-    #BATCH
-    sentence_batches = []
-    tag_batches = []
-    character_batches = []
-
-    sen = []
-    tag = []
-    word_c = []
-    sent_c = []
-    counter = 0
-
-    for i in range(len(training_data)):
-
-
-
-        if BATCH_SIZE == counter:
-            sen = torch.stack(sen)
-            tag = torch.stack(tag)
-
-            sentence_batches.append(sen)
-            tag_batches.append(tag)
-            character_batches.append(sent_c)
-
-
-            counter = 0
-
-            sen = []
-            tag = []
-            sent_c = []
-
-        sen_temp = training_data[i][0] + ([UNUSED_WORD for i in range(PADDING_SIZE - len(training_data[i][0]))])
-        word_c = []
-        for word in sen_temp[:PADDING_SIZE]:
-            word = pad_word(word)
-            word = prepare_char_seq(word, char_to_idx)
-            word_c.append(word)
-
-
-
-        sen_temp = prepare_seq(sen_temp, word_to_idx)
-        tag_temp = training_data[i][1] + ([UNUSED_TAG for i in range(PADDING_SIZE - len(training_data[i][1]))])
-        tag_temp = prepare_seq(tag_temp, tag_to_idx)
-
-        sent_c.append(word_c)
-        sen.append(sen_temp[:PADDING_SIZE])
-        tag.append(tag_temp[:PADDING_SIZE])
-
-
-        counter = counter + 1
-
-    train_time = time.time()
-    print(train_time - prep)
-
-    print("Training...")
     ### Reduce number of epochs, if training data is big
+    start_time = time.time()
+
+    train_data = CustomDataset(training_data,word_to_idx, tag_to_idx)
+    train_loader = DataLoader(dataset=train_data, batch_size=BATCH_SIZE, shuffle=False, collate_fn=pad_collate)
     for epoch in range(NUM_EPOCHS):  # again, normally you would NOT do 300 epochs, it is toy data
-        
-            for batch in tqdm(range(len(sentence_batches))):
-                model.zero_grad()
-            
-            
-                tag_scores = model(sentence_batches[batch], character_batches[batch])
-            
-            
-                temp_loss = torch.Tensor([0])
-            
-                for item in (range(len(tag_scores))):    
-                    temp_loss += loss_function(tag_scores[item],tag_batches[batch][item])
-            
-                loss = temp_loss/BATCH_SIZE
-                print(loss)
-                loss.backward()
-        
-                optimizer.step()
-            
 
-    torch.save((word_to_idx, tag_to_idx, char_to_idx, model.state_dict()), model_file)
+        for item in (train_loader):
+            # Step 1. Remember that Pytorch accumulates gradients.
+            # We need to clear them out before each instance
+            model.zero_grad()
+
+            # Step 3. Run our forward pass.
+            tag_scores = model(item[0], item[1])
+            #
+            # # Step 4. Compute the loss, gradients, and update the parameters by
+            # #  calling optimizer.step()
+            #targets = prepare_sequence(tags, tag_to_idx)
+            temp_loss = torch.Tensor([0])
+            for i in range(len(tag_scores)):
+                temp_loss += loss_function(tag_scores[i], item[2][i])
+
+            loss = temp_loss/BATCH_SIZE
+            #print('Loss: ' + str(loss.item()))
+    #         loss_list.append(loss.item())
+            loss.backward()
+            optimizer.step()
+            #
+    #         correct = (predicted == targets).sum().item()
+    #         acc_list.append(correct / total)
+
+    #         if (i + 1) % 100 == 0:
+    #             print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Accuracy: {:.2f}%'
+    #                   .format(epoch + 1, NUM_EPOCHS, i + 1, total_step, loss.item(),
+    #                           (correct / total) * 100))
+        print("Epoch: " + str(epoch))
+        print("Loss: " + str(loss))
+    print(f'Duration: {time.time() - start_time}')
+    torch.save((word_to_idx, tag_to_idx, char_to_idx, model.state_dict()), 'hello')
     print('Finished...')
-
-
-
 
 
 if __name__ == "__main__":
