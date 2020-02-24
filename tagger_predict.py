@@ -23,8 +23,8 @@ def prepare_test_sequence(seq, to_ix):
 def tag_sentence(test_file, model_file, out_file):
     # write your code here. You can add functions as well.
     # use torch library to load model_file
-    model = LSTMTagger()
-    word_to_idx, tag_to_idx, model_state_dict = torch.load(model_file)
+    word_to_idx, tag_to_idx, char_to_idx, model_state_dict = torch.load(model_file)
+    model = LSTMTagger(word_to_idx, tag_to_idx, char_to_idx)
     model.load_state_dict(model_state_dict)
 
     with open(test_file) as f:
@@ -33,11 +33,13 @@ def tag_sentence(test_file, model_file, out_file):
     with open(out_file, 'w') as f:
         for sentence in content:
             sentence_in = prepare_test_sequence(sentence.split(), word_to_idx)
+            sentence=[sentence.split()]
             # Forward pass
-            tag_scores = model(sentence_in)
+            tag_scores = model(sentence, sentence_in.unsqueeze(0))
             for i in range(0, len(sentence_in)):
                 word_idx = sentence_in[i]
-                tag_idx = tag_scores[i].argmax()
+                tag_idx = tag_scores[0][i].argmax()
+
                 f.write(f'{list(word_to_idx.keys())[int(word_idx)]}/{list(tag_to_idx.keys())[int(tag_idx)]} ')
             f.write('\n')
 
